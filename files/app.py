@@ -112,9 +112,9 @@ for key, default in {
 # Try loading API key from secrets/env
 if not st.session_state.api_key:
     try:
-        st.session_state.api_key = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+        st.session_state.api_key = st.secrets.get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
     except Exception:
-        st.session_state.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        st.session_state.api_key = os.environ.get("OPENAI_API_KEY", "")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -208,31 +208,37 @@ Only include this JSON if a chart would genuinely help. If no chart needed, omit
 """
 
 
-def ask_claude(question: str, df: pd.DataFrame, api_key: str):
-    """Call Claude, parse text + optional chart JSON."""
+def ask_ai(question: str, df: pd.DataFrame, api_key: str):
+    """Call OpenAI, parse text + optional chart JSON."""
     if not api_key:
         return "❌ API key topilmadi. Chap panelda API key kiriting.", None
 
     try:
-        from anthropic import Anthropic
-        client = Anthropic(api_key=api_key)
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
 
         summary = build_data_summary(df)
 
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=800,
-            system=f"""Sen ma'lumot tahlilchisisan. Foydalanuvchi savollariga O'zbek tilida javob ber.
+            temperature=0.7,
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"""Sen ma'lumot tahlilchisisan. Foydalanuvchi savollariga O'zbek tilida javob ber.
 Aniq raqamlar keltir, emojilardan foydalanilsin. Qisqa va aniq bo'l.
 
 {CHART_SCHEMA}
 
 Dataset ma'lumotlari:
-{summary}""",
-            messages=[{"role":"user","content":question}]
+{summary}"""
+                },
+                {"role":"user","content":question}
+            ]
         )
 
-        full_text = response.content[0].text
+        full_text = response.choices[0].message.content
         chart_cfg = None
 
         # Extract chart JSON if present
@@ -332,8 +338,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown('<div class="section-title">🔑 API Key</div>', unsafe_allow_html=True)
-    api_input = st.text_input("Anthropic API Key", value=st.session_state.api_key,
-                               type="password", help="Claude uchun API key")
+    api_input = st.text_input("OpenAI API Key", value=st.session_state.api_key,
+                               type="password", help="OpenAI uchun API key")
     if api_input:
         st.session_state.api_key = api_input
     if st.session_state.api_key:
@@ -447,7 +453,7 @@ with tab3:
     st.markdown('<div class="section-title">🤖 AI bilan suhbat</div>', unsafe_allow_html=True)
 
     if not st.session_state.api_key:
-        st.warning("⚠️ Chat ishlatish uchun chap panelda Anthropic API key kiriting")
+        st.warning("⚠️ Chat ishlatish uchun chap panelda OpenAI API key kiriting")
     else:
         # Chat history display
         chat_container = st.container()
@@ -465,28 +471,27 @@ with tab3:
             st.info("💬 Savol yozing yoki chap paneldan namuna savol bosing")
 
         # Input area
-        pending = st.session_state.pop("pending_question", "")
-        question = st.text_input(
-            "Savol bering",
-            value=pending,
-            placeholder="Masalan: Qaysi mahsulot eng ko'p sotilgan?",
-            key="user_question"
-        )
-
-        col_btn1, col_btn2 = st.columns([1, 4])
-        with col_btn1:
-            send = st.button("📨 Yuborish", type="primary", use_container_width=True)
-        with col_btn2:
+        col1, col2 = st.columns([4, 1])
+        with col2:
             if st.button("🗑️ Tozalash", use_container_width=True):
                 st.session_state.chat_history = []
                 st.session_state.active_chart = None
                 st.rerun()
 
-        if send and question.strip():
-            st.session_state.chat_history.append({"role":"user","content":question})
+        prompt = st.chat_input("Savol bering...")
 
+        if "pending_question" in st.session_state:
+            prompt = st.session_state.pop("pending_question")
+
+        if prompt and prompt.strip():
+            user_msg = prompt.strip()
+            st.session_state.chat_history.append({"role":"user","content":user_msg})
+            
+            with chat_container:
+                st.markdown(f'<div class="chat-user">👤 {user_msg}</div>', unsafe_allow_html=True)
+            
             with st.spinner("🤖 AI javob bermoqda..."):
-                answer_text, chart_cfg = ask_claude(question, df, st.session_state.api_key)
+                answer_text, chart_cfg = ask_ai(user_msg, df, st.session_state.api_key)
 
             msg_entry = {"role":"assistant","content":answer_text}
             if chart_cfg:
